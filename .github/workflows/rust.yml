@@ -23,16 +23,3 @@ jobs:
       run: cargo build --target wasm32-unknown-unknown --verbose
     - name: Run tests
       run: cargo test --verbose
-
-  deploy:
-    needs: build
-    permissions:
-      pages: write
-      id-token: write # This is required for requesting the JWT
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    runs-on: self-hosted
-    steps:
-    - name: Deploy
-      uses: actions/deploy-pages@v2
