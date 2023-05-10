@@ -4,6 +4,9 @@ use eframe::egui;
 
 extern crate bbwad;
 
+mod file_dialog;
+use crate::file_dialog::FileDialog;
+
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> Result<(), eframe::Error> {
     env_logger::init(); // Log to stderr (if you run with `RUST_LOG=debug`).
@@ -47,6 +50,7 @@ struct MyApp {
     dropped_files: Vec<egui::DroppedFile>,
     picked_path: Option<String>,
     wad_file: Option<bbwad::WadFile>,
+    file_dialog: FileDialog,
     upload_menu: bool,
 }
 
@@ -59,55 +63,13 @@ impl Default for MyApp {
             dropped_files: Vec::<egui::DroppedFile>::new(),
             picked_path: None,
             wad_file: None,
+            file_dialog: Default::default(),
             upload_menu: false,
         }
     }
 }
 
 impl MyApp {
-    fn detect_files_being_dropped(&mut self, ctx: &egui::Context) {
-        use egui::*;
-   
-        let input = ctx.input(move |i| i.clone());
-        //if ctx.input(move |i| i.raw.hovered_files.is_empty()) {
-        if input.raw.hovered_files.is_empty() {
-
-            let mut text = "Dropping files:\n".to_owned();
-            let input = ctx.input(move |i| i.clone());
-            for file in input.raw.hovered_files {
-                if let Some(path) = &file.path {
-                    text += &format!("\n{}", path.display());
-
-                    self.picked_path = Some(path.as_path().to_string_lossy().to_string());
-                } else if !file.mime.is_empty() {
-                    text += &format!("\n{}", file.mime);
-                } else {
-                    text += "\n???";
-                }
-            }
-
-            let painter =
-                ctx.layer_painter(LayerId::new(Order::Foreground, Id::new("file_drop_target")));
-
-            let screen_rect = ctx.input(move |i| i.screen_rect());
-            painter.rect_filled(screen_rect, 0.0, Color32::from_black_alpha(192));
-            painter.text(
-                screen_rect.center(),
-                Align2::CENTER_CENTER,
-                text,
-                egui::FontId::monospace(14.0),
-                Color32::WHITE,
-            );
-        }
-
-        // Collect dropped files:
-        //if !ctx.input(move |i| i.raw.dropped_files.is_empty()) {
-        if !input.raw.dropped_files.is_empty() {
-            self.wad_file = None;
-            self.dropped_files = input.raw.dropped_files.clone();
-        }
-    }
-
     fn update_active_image(&mut self, ui: &egui::Ui) {
         match &self.wad_file {
             Some(wad_file) =>  {
@@ -184,9 +146,9 @@ impl MyApp {
 
 impl eframe::App for MyApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        let mut update_active_image = false;
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.heading("Wad Viewer");
-            let mut update_active_image = false;
 
             ui.horizontal(|ui| {
                 if ui.button("Prev").clicked() {
@@ -229,70 +191,42 @@ impl eframe::App for MyApp {
                 }
             });
 
+            if ui.button("regen").clicked() {
+                self.wad_file.as_mut().unwrap().regenerate();
+            }
+
+        });
+        egui::TopBottomPanel::bottom("bottom")
+            .resizable(true)
+            .frame(egui::Frame::none().fill(egui::Color32::from_rgb(64, 64, 128)))
+            .show(ctx, |ui| {
             egui::ScrollArea::horizontal()
                 .id_source("second")
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
                         for (itr, texture) in self.textures.iter().enumerate() {
-                            if ui.add(egui::ImageButton::new(texture, texture.size_vec2())).clicked() {
+                            let response = ui.add(egui::ImageButton::new(texture, texture.size_vec2()));
+                            if response.clicked() {
                                 self.wad_index = itr;
                                 update_active_image = true;
                             }
                         }
                     });
                 });
-
-            if ui.button("regen").clicked() {
-                self.wad_file.as_mut().unwrap().regenerate();
-            }
-
             if update_active_image {
                 self.update_active_image(&ui);
             }
-
         });
         egui::SidePanel::right("side_panel_right").show(ctx, |ui| {
             if ui.button("Upload File").clicked() {
-                self.upload_menu = true;
+                self.file_dialog.open(); 
             }
-                
-            if self.upload_menu {
-                self.detect_files_being_dropped(ctx);
-                if let Some(picked_path) = &self.picked_path {
-                    ui.horizontal(|ui| {
-                        ui.label("Picked file:");
-                        ui.monospace(picked_path);
-                    });
-                }
-                // Show dropped files (if any):
-                if !self.dropped_files.is_empty() {
-                    ui.group(|ui| {
-                        ui.label("Dropped files:");
 
-                        for file in &self.dropped_files {
-                            let mut info = if let Some(path) = &file.path {
-                                path.display().to_string()
-                            } else if !file.name.is_empty() {
-                                file.name.clone()
-                            } else {
-                                "???".to_owned()
-                            };
-                            if let Some(bytes) = &file.bytes {
-                                info += &format!(" ({} bytes)", bytes.len());
-                                if self.wad_file.is_none() {
-                                    self.wad_file = Some(bbwad::WadFile::from_bytes(&bytes.to_vec()));
-                                    self.upload_menu = false;
-                                }
-                            }
-                            ui.label(info);
-                        }
-                    });
-                }
-                // assure to clean the dropped files list as soon as we have an image. Needed to reload a new, future image.
-                if self.wad_file.is_some() {
-                    self.fill_textures_vector(&ui); 
-                    self.dropped_files.clear();
-                }
+            if let Some(file) = self.file_dialog.get() {
+                self.wad_file.replace(bbwad::WadFile::from_bytes(&file));
+                self.fill_textures_vector(&ui); 
+                self.update_active_image(&ui);
+                update_active_image = true;
             }
         });
     }

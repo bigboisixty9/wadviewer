@@ -24,7 +24,7 @@ tracing-wasm = "0.2"
 wasm-bindgen-futures = "0.4"
 getrandom = { version = "0.2", features = ["js"] }
 wasm-bindgen = "0.2.84"
-web-sys = { version = "0.3.61", features = ["BlobPropertyBag", "Url", "HtmlAnchorElement", "FileReader", "Request", "RequestInit", "RequestMode", "Response", "Window"] }
+web-sys = { version = "0.3.61", features = ["FilePropertyBag", "BlobPropertyBag", "Url", "HtmlAnchorElement", "FileReader", "Request", "RequestInit", "RequestMode", "Response", "Window"] }
 js-sys = "0.3.61"
 
 [profile.release]
