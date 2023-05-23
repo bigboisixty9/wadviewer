@@ -94,7 +94,7 @@ impl DirectoryEntry {
         let mut ret_opt: Option<String> = None;
         for itr in 0..DIRECTORY_ENTRY_NAME_SIZE {
             if self.sz_name[itr] == 0 {
-                let substr = self.sz_name[1..itr].try_into().unwrap();
+                let substr = self.sz_name[0..itr].try_into().unwrap();
                 ret_opt = Some(String::from_utf8(substr).unwrap());
                 break;
             }
@@ -277,6 +277,18 @@ pub struct WadFile {
 }
 
 impl WadFile {
+    pub fn validate_header(buf: &Vec::<u8>) -> bool {
+        if buf.len() < WAD_HEADER_SIZE {
+            return false
+        }
+        let header = WadHeader::from_bytes(buf[0..WAD_HEADER_SIZE].try_into().unwrap());
+        let sz_magic_str =  std::str::from_utf8(&header.sz_magic).unwrap();
+        if sz_magic_str != "WAD3" {
+            return false
+        }
+        true
+    }
+
     pub fn from_path(path: &Path) -> Self {
         let mut wad_file = File::open(path).expect("fucked");
         let mut wad_data = vec![];
@@ -336,6 +348,115 @@ impl WadFile {
             ret_vec.append(&mut entry.dir_entry.to_vec());
         }
         ret_vec
+    }
+}
+
+pub struct WadFileWidget {
+    pub wad_file: WadFile,
+    pub wad_image: Option<egui::TextureHandle>,
+    pub textures: Vec<egui::TextureHandle>,
+    pub texture_index: usize,
+    pub update_texture: bool,
+    pub init_textures: bool,
+    pub name: String,
+    pub id: usize,
+}
+
+impl WadFileWidget {
+    pub fn from_bytes(buf: &Vec<u8>, id: usize) -> Self {
+        let wad_file = WadFile::from_bytes(buf);
+        let wad_image = None;
+        let textures = vec![];
+        let texture_index = 0;
+        let update_texture = true;
+        let init_textures = true;
+        let name = String::from_utf8_lossy(&wad_file.entries[0].dir_entry.sz_name).to_string();
+        Self {
+            wad_file,
+            wad_image,
+            textures,
+            texture_index,
+            update_texture,
+            init_textures,
+            name,
+            id,
+        }
+    }
+}
+
+impl super::HlFileWidget for WadFileWidget {
+    fn show(&mut self, ctx: &egui::Context, open: &mut bool) {
+        use super::View as _;
+        egui::Window::new(self.name.as_str())
+            .open(open)
+            .scroll2([true, true])
+            .id(egui::Id::new(self.id))
+            .show(ctx, |ui| self.ui(ui));
+    }
+}
+
+impl super::View for WadFileWidget {
+    fn ui(&mut self, ui: &mut egui::Ui) {
+        if self.init_textures {
+            self.textures.clear();
+            for entry in self.wad_file.entries.iter() {
+                let texture = &entry.texture;
+                let egui_image = ui.ctx().load_texture(
+                    "my-image", 
+                    egui::ColorImage::from_rgb(
+                        [texture.header.n_width as usize, texture.header.n_height as usize], 
+                        &texture.to_rgb_image_vec(MIPMAP_LEVEL::LEVEL0)),
+                    Default::default());
+                self.textures.push(egui_image);
+            }
+            self.init_textures = false;
+        }
+        ui.horizontal(|ui| {
+            match &self.wad_image {
+                Some(image) => {
+                    ui.horizontal_centered(|ui| {
+                        ui.set_height(256.);
+                        ui.set_width(512.);
+                        ui.menu_image_button(image.into(), image.size_vec2(), |ui| {
+                            if ui.button("Download").clicked() {
+                                ui.close_menu();
+                            } 
+                            if ui.button("Upload").clicked() {
+                                ui.close_menu();
+                            } 
+                            if ui.button("Close").clicked() {
+                                ui.close_menu();
+                            } 
+                        });
+                        //ui.add(egui::Image::new(image, image.size_vec2()));
+                    });
+                },
+                None => {
+                    let texture: &egui::TextureHandle = &ui.ctx().load_texture(
+                        "my-image", 
+                        egui::ColorImage::example(),
+                        Default::default());
+                    ui.add_sized([300., 300.], egui::Image::new(texture, texture.size_vec2()));
+                },
+            }
+        });
+        egui::ScrollArea::horizontal()
+            .id_source("second")
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    for (itr, texture) in self.textures.iter().enumerate() {
+                        let response = ui.add(egui::ImageButton::new(texture, texture.size_vec2()));
+                        if response.clicked() {
+                            self.texture_index = itr;
+                            self.update_texture = true;
+                        }
+                    }
+                });
+            });
+        if self.update_texture {
+            self.wad_image = Some(self.textures[self.texture_index].to_owned());
+            self.update_texture = false;
+        }
     }
 }
 

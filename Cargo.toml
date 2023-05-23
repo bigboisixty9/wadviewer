@@ -15,7 +15,11 @@ eframe = { version = "0.21.3", default-features = false, features = [
 egui_glow = "0.21.0"
 glow = "0.12"
 env_logger = "0.10"
-bbwad = { path = "./lib/bbwad" }
+#bbwad = { path = "./lib/bbwad" }
+#bbmdl = { path = "./lib/bbmdl" }
+hlfiles = { path = "./lib/hlfiles" }
+bytebuffer = "2.1.1"
+global_counter = "0.2.2"
 
 # web:
 [target.'cfg(target_arch = "wasm32")'.dependencies]
