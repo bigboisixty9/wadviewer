@@ -1,5 +1,10 @@
+pub mod file_dialog;
 pub mod hlwad;
 pub mod hlmdl;
+pub mod info;
+
+#[macro_use]
+extern crate bmp;
 
 /// Something to view in the fileWidth windows
 pub trait View {

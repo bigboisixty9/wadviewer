@@ -6,6 +6,7 @@ extern crate hlfiles;
 
 use hlfiles::hlmdl;
 use hlfiles::hlwad;
+use hlfiles::info;
 
 mod file_dialog;
 use crate::file_dialog::FileDialog;
@@ -76,9 +77,19 @@ impl eframe::App for MyApp {
             hl_file_widget.show(ctx, &mut true);
         }
         egui::TopBottomPanel::top("top").show(ctx, |ui| {
-            if ui.button("Upload File").clicked() {
-                self.file_dialog.open(); 
-            }
+            ui.horizontal(|ui| {
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
+                    if ui.button("Upload File").clicked() {
+                        self.file_dialog.open(); 
+                    }
+                });
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
+                    if ui.button("Get Info").clicked() {
+                        let id = self.id_incrementor();
+                        self.hl_file_widgets.push(Box::new(info::DevInfoWindow::new(id)));
+                    }
+                });
+            });
             if let Some(file) = self.file_dialog.get() {
                 if hlwad::WadFile::validate_header(&file) {
                     let id = self.id_incrementor();

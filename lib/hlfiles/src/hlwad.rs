@@ -1,8 +1,14 @@
-use std::io::{BufWriter, Read, Seek};
+use image::buffer::ConvertBuffer;
+use rgb::ComponentBytes;
+use rgb::FromSlice;
+use std::io::{BufWriter, Cursor, Read};
 use std::fs::File;
 use std::path::Path;
-use std::fmt;
+use std::{fmt, default};
 use std::collections::HashMap;
+use wasm_bindgen::prelude::*;
+
+use crate::file_dialog::FileDialog;
 
 pub const WAD_HEADER_SIZE: usize = 12;
 
@@ -80,6 +86,13 @@ impl DirectoryEntry {
 
     fn to_vec(&self) -> Vec<u8> {
         let mut ret_vec = Vec::<u8>::new();
+        //ret_vec.append(&mut self.n_file_pos.to_le_bytes().to_vec());
+        //ret_vec.append(&mut self.n_disk_size.to_le_bytes().to_vec());
+        //ret_vec.append(&mut self.n_size.to_le_bytes().to_vec());
+        //ret_vec.append(&mut self.n_type.to_le_bytes().to_vec());
+        //ret_vec.append(&mut self.b_compression.to_le_bytes().to_vec());
+        //ret_vec.append(&mut self.padding.to_le_bytes().to_vec());
+        //ret_vec.append(&mut self.sz_name.to_vec());
         ret_vec.append(&mut self.n_file_pos.to_le_bytes().to_vec());
         ret_vec.append(&mut self.n_disk_size.to_le_bytes().to_vec());
         ret_vec.append(&mut self.n_size.to_le_bytes().to_vec());
@@ -126,11 +139,12 @@ pub struct Color {
 
 impl Color {
     pub fn new(r: u8, g: u8, b: u8) -> Self {
+        //Self {r: b, g: r, b: g}
         Self {r, g, b}
     }
 
     fn to_vec(&self) -> Vec<u8> {
-        vec![self.r, self.b, self.g]
+        vec![self.r, self.g, self.b]
     }
 }
 
@@ -143,7 +157,6 @@ pub struct TextureHeader {
     pub n_height: u32,
     pub mip_offsets: [u32; 4],
 }
-
 
 impl TextureHeader {
     pub fn from_bytes(buf: &[u8; 40]) -> Self {
@@ -202,24 +215,140 @@ pub struct Texture {
     pub header: TextureHeader,
     pub data: Vec<u8>,
     pub palette: [Color; 256],
+    pub image: image::RgbImage,
 }
 
 impl Texture {
     pub fn from_directory_entry(entry: DirectoryEntry, wad_data: &Vec<u8>) -> Self {
         let mut palette: [Color; 256] = [Color::new(0, 0, 0); 256];
-        let mut palette_offset = (entry.n_file_pos + entry.n_disk_size - (256 * 3) - 2) as usize;
+        let palette_offset = (entry.n_file_pos + entry.n_disk_size - (256 * 3) - 2) as usize;
+        let mut palette_offset_itr = palette_offset;
         let header_slice = &wad_data[(entry.n_file_pos as usize)..((entry.n_file_pos as usize) + TEXTURE_HEADER_SIZE)];
         let header = TextureHeader::from_bytes(header_slice.try_into().expect("failed")); 
         for mut color in palette.iter_mut() {
-            *color = Color::new(wad_data[palette_offset], wad_data[palette_offset + 1], wad_data[palette_offset + 2]);
-            palette_offset += 3;
+            *color = Color::new(wad_data[palette_offset_itr], wad_data[palette_offset_itr + 1], wad_data[palette_offset_itr + 2]);
+            palette_offset_itr += 3;
         }
         let data = wad_data[((entry.n_file_pos as usize) + TEXTURE_HEADER_SIZE)..palette_offset].to_vec();
+        let mut image_vec = Vec::<u8>::new();
+        for itr in 0..((header.n_width*header.n_height) as usize) {
+            let color = palette[data[itr] as usize];
+            //image_vec.push(color.r);
+            //image_vec.push(color.g);
+            //image_vec.push(color.b);
+            image_vec.append(&mut color.to_vec());
+        }
+        let image = image::RgbImage::from_vec(header.n_width, header.n_height, image_vec).expect("Could not create image from texture");
         Self {
             header,
             data,
             palette,
+            image, 
         }
+    }
+
+    fn to_array(strings: &[&str] ) -> js_sys::Array {
+        let arr = js_sys::Array::new_with_length(strings.len() as u32);
+        for (i, s) in strings.iter().enumerate() {
+            arr.set(i as u32, JsValue::from_str(s));
+        }
+        arr
+    }
+
+    fn quantize_images(images: Vec<image::RgbImage>) -> (Vec<rgb::RGBA<u8>>, Vec<u8>) {
+        let mut attributes = imagequant::new(); 
+        let mut histogram = imagequant::Histogram::new(&attributes);
+        let mut quant_images = vec![];
+        for image in images.iter() {
+            let quantizer = imagequant::new();
+            let (width, height) = image.dimensions();
+            web_sys::console::debug_3(&"USE ME".into(), &width.into(), &height.into());
+            let tmp = image.to_vec();
+            let mut rgba_image_raw = vec![];
+            let mut itr = 0;
+            for pixel in tmp.iter() {
+                rgba_image_raw.push(*pixel);
+                if itr % 4 == 3 {
+                    rgba_image_raw.push(0);
+                    itr += 1;
+                }
+                itr += 1;
+            }
+            rgba_image_raw.push(0);
+            let rgba_image = rgba_image_raw.as_rgba();
+            let mut quant_image = quantizer.new_image(rgba_image, width as usize, height as usize, 0.0).unwrap();
+            histogram.add_image(&quantizer, &mut quant_image);
+            quant_images.push(quant_image);
+        }
+        let mut result = histogram.quantize(&attributes).expect("failure big style");
+        let mut indices_ret_vec = vec![];
+        for (idx, image) in images.iter().enumerate() {
+            let (_, mut indices) = result.remapped(&mut quant_images[idx]).unwrap();
+            indices_ret_vec.append(&mut indices);
+            web_sys::console::debug_3(&"USE ME".into(), &indices_ret_vec.len().into(), &idx.into());
+        }
+        let palette = result.palette_vec();
+        (palette, indices_ret_vec)
+    }
+
+    pub fn from_image(image: image::RgbImage) -> Self {
+        let images = Self::gen_mipmaps(image);
+        let (width, height) = images[0].dimensions();
+        let (palette_vec, mut indices_vec) = Texture::quantize_images(images);
+        let mut palette_array: [Color; 256] = [Color::new(0, 0, 0); 256];
+        for (itr, color) in palette_vec.iter().enumerate() {
+            let r = color.a;
+            let g = color.g;
+            let b = color.b;
+            palette_array[itr] = Color::new(r, g, b);
+        }
+        let mut size = width * height;
+        let mip_offset_1 = TEXTURE_HEADER_SIZE as u32;
+        let mip_offset_2 = mip_offset_1 + size;
+        let mut size = (width/2) * (height/2);
+        let mip_offset_3 = mip_offset_2 + size;
+        let mut size = (width/4) * (height/4);
+        let mip_offset_4 = mip_offset_3 + size;
+        let mip_offsets = [mip_offset_1, mip_offset_2, mip_offset_3, mip_offset_4];
+        web_sys::console::debug_5(&"HELP ME".into(), &mip_offset_1.into(), &mip_offset_2.into(), &mip_offset_3.into(), &mip_offset_4.into());
+        let header = TextureHeader {
+            sz_name: [b'c', b'u', b'm', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            n_width: width, 
+            n_height: height, 
+            mip_offsets,
+        };
+        let mut data_vec = vec![];
+        data_vec.append(&mut indices_vec);
+        data_vec.append(&mut vec![0, 0]);
+        let mut rgb_image_vec = vec![];
+        for idx in 0..(width*height) {
+            let color = palette_array[data_vec[idx as usize] as usize];
+            rgb_image_vec.append(&mut color.to_vec());
+        }
+        web_sys::console::debug_2(&"PISS ME".into(), &palette_array.len().into());
+        let image = image::RgbImage::from_vec(width, height, rgb_image_vec).unwrap();
+        Self { 
+            header,
+            data: data_vec,
+            palette: palette_array,
+            image, 
+        }
+    }
+
+    fn gen_mipmaps(image: image::RgbImage) -> Vec<image::RgbImage> {
+        let orig_image = image.clone();
+        let (mut width, mut height) = image.dimensions();
+        let mut ret_vec = vec![];
+        ret_vec.push(image);
+        width = width / 2;
+        height = height / 2;
+        for itr in 0..3 {
+            let img = image::imageops::resize(&orig_image, width, height, image::imageops::FilterType::Gaussian);
+            width = width / 2;
+            height = height / 2;
+            ret_vec.push(img);
+        }
+        ret_vec
     }
 
     pub fn to_rgb_image_vec(&self, level: MIPMAP_LEVEL) -> Vec<u8> {
@@ -256,6 +385,8 @@ impl Texture {
         for color in self.palette {
             ret_vec.append(&mut color.to_vec());
         }
+        ret_vec.push(0x00);
+        ret_vec.push(0x00);
         ret_vec
     }
 
@@ -327,10 +458,10 @@ impl WadFile {
             entry.dir_entry = DirectoryEntry {
                 n_file_pos: offset_count,
                 n_disk_size: size,
-                n_size: size,
+                n_size: size, 
                 n_type: 0x43,
                 b_compression: 0,
-                padding: 42069,
+                padding: 0,
                 sz_name: entry.dir_entry.sz_name,
             };
             offset_count += size;
@@ -360,6 +491,7 @@ pub struct WadFileWidget {
     pub init_textures: bool,
     pub name: String,
     pub id: usize,
+    file_dialog: FileDialog,
 }
 
 impl WadFileWidget {
@@ -380,6 +512,7 @@ impl WadFileWidget {
             init_textures,
             name,
             id,
+            file_dialog: Default::default(),
         }
     }
 }
@@ -415,20 +548,37 @@ impl super::View for WadFileWidget {
             match &self.wad_image {
                 Some(image) => {
                     ui.horizontal_centered(|ui| {
-                        ui.set_height(256.);
-                        ui.set_width(512.);
+                        //ui.set_height(256.);
+                        //ui.set_width(512.);
                         ui.menu_image_button(image.into(), image.size_vec2(), |ui| {
                             if ui.button("Download").clicked() {
+                                let texture = &self.wad_file.entries[self.texture_index].texture;
+                                let texture_header = texture.header;
+                                let width = texture_header.n_width;
+                                let height = texture_header.n_height;
+                                let mut raw_image = Cursor::new(Vec::new());
+                                let mut image_writer = BufWriter::new(raw_image);
+                                texture.image.write_to(&mut image_writer, image::ImageFormat::Bmp);
+                                self.file_dialog.save("cummy.bmp", image_writer.into_inner().unwrap().into_inner());
                                 ui.close_menu();
                             } 
                             if ui.button("Upload").clicked() {
+                                self.file_dialog.open(); 
                                 ui.close_menu();
                             } 
                             if ui.button("Close").clicked() {
                                 ui.close_menu();
                             } 
                         });
-                        //ui.add(egui::Image::new(image, image.size_vec2()));
+                        if let Some(file) = self.file_dialog.get() {
+                            let name = self.wad_file.entries[self.texture_index].texture.header.sz_name;
+                            let image: image::RgbImage = image::load_from_memory_with_format(&file[..], image::ImageFormat::Bmp).unwrap().to_rgb8();
+                            self.wad_file.entries[self.texture_index].texture = Texture::from_image(image);
+                            self.wad_file.entries[self.texture_index].texture.header.sz_name = name;
+                            self.wad_file.regenerate();
+                            self.update_texture = true;
+                            self.init_textures = true;
+                        }
                     });
                 },
                 None => {
@@ -453,6 +603,14 @@ impl super::View for WadFileWidget {
                     }
                 });
             });
+        if ui.button("Download").clicked() {
+            self.wad_file.regenerate();
+            self.file_dialog.save("sick-ass-shit.wad", self.wad_file.to_bytes());
+        }
+        if ui.button("Piss").clicked() {
+            self.wad_file.to_bytes();
+        }
+
         if self.update_texture {
             self.wad_image = Some(self.textures[self.texture_index].to_owned());
             self.update_texture = false;
