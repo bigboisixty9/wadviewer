@@ -1,4 +1,4 @@
-type FileData = Vec<u8>;
+type FileData = (String, Vec<u8>);
 
 // wasm
 
@@ -66,10 +66,12 @@ impl FileDialog {
             if let Some(file) = input_clone.files().and_then(|files| files.get(0)) {
                 let reader = FileReader::new().unwrap();
                 let reader_clone = reader.clone();
+                let name = file.name();
                 let onload_closure = Closure::once(Box::new(move || {
                     let array_buffer = reader_clone.result().unwrap().dyn_into::<ArrayBuffer>().unwrap();
                     let buffer = Uint8Array::new(&array_buffer).to_vec();
-                    tx.send(buffer).ok();
+                    let file_data = (name, buffer);
+                    tx.send(file_data).ok();
                 }));
 
                 reader.set_onload(Some(onload_closure.as_ref().unchecked_ref()));
@@ -83,15 +85,15 @@ impl FileDialog {
         self.input.click();
     }
 
-    pub fn get(&self) -> Option<Vec<u8>> {
-        if let Ok(file) = self.rx.try_recv() {
-            Some(file)
+    pub fn get(&self) -> Option<(String, Vec<u8>)> {
+        if let Ok(file_data) = self.rx.try_recv() {
+            Some(file_data)
         } else {
             None
         }
     }
 
-    pub fn save(&self, filename: &str, filedata: FileData) {
+    pub fn save(&self, filename: &str, filedata: Vec<u8>) {
         let array = Uint8Array::from(filedata.as_slice());
         let blob_parts = Array::new();
         blob_parts.push(&array.buffer());
@@ -101,9 +103,14 @@ impl FileDialog {
             filename,
             web_sys::FilePropertyBag::new().type_("application/octet-stream")
         ).unwrap();
-        let url = Url::create_object_url_with_blob(&file);
+        let url = Url::create_object_url_with_blob(&file).unwrap();
         if let Some(window) = web_sys::window() {
-            window.location().set_href(&url.unwrap()).ok();
+            if let Some(document) = window.document() {
+                let event = web_sys::Event::new("click").unwrap();
+                let window: &web_sys::Window = window.dyn_ref().unwrap();
+                let _result = window.open_with_url_and_target(&url, "_blank");
+                Url::revoke_object_url(&url).unwrap();
+            }
         }
     }
 }

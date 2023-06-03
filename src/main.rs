@@ -2,10 +2,12 @@
 
 use eframe::egui;
 
-extern crate bbwad;
+extern crate hlfiles;
 
-mod file_dialog;
-use crate::file_dialog::FileDialog;
+use hlfiles::hlmdl;
+use hlfiles::hlwad;
+use hlfiles::info;
+use hlfiles::file_dialog::FileDialog;
 
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> Result<(), eframe::Error> {
@@ -29,7 +31,8 @@ fn main() {
     // Redirect tracing to console.log and friends:
     tracing_wasm::set_as_global_default();
 
-    let web_options = eframe::WebOptions::default();
+    let mut web_options = eframe::WebOptions::default();
+    web_options.default_theme = eframe::Theme::Dark;
 
     web_sys::console::info(&js_sys::Array::from(&wasm_bindgen::JsValue::from_str("ass")));
     wasm_bindgen_futures::spawn_local(async {
@@ -44,190 +47,73 @@ fn main() {
 }
 
 struct MyApp {
-    wad_index: usize,
-    active_image: Option<[egui::TextureHandle; 4]>,
-    textures: Vec<egui::TextureHandle>,
-    dropped_files: Vec<egui::DroppedFile>,
-    picked_path: Option<String>,
-    wad_file: Option<bbwad::WadFile>,
     file_dialog: FileDialog,
-    upload_menu: bool,
+    hl_file_widgets: Vec<Box<dyn hlfiles::HlFileWidget>>,
+    id_incrementor: usize,
 }
 
 impl Default for MyApp {
     fn default() -> Self {
         Self {
-            wad_index: 0,
-            active_image: None,
-            textures: Vec::<egui::TextureHandle>::new(),
-            dropped_files: Vec::<egui::DroppedFile>::new(),
-            picked_path: None,
-            wad_file: None,
             file_dialog: Default::default(),
-            upload_menu: false,
+            hl_file_widgets: vec![],
+            id_incrementor: 0,
         }
     }
 }
 
 impl MyApp {
-    fn update_active_image(&mut self, ui: &egui::Ui) {
-        match &self.wad_file {
-            Some(wad_file) =>  {
-                let wad_texture = &wad_file.entries[self.wad_index].texture;
-                self.active_image.replace(
-                    [
-                        ui.ctx().load_texture(
-                            "my-image", 
-                            egui::ColorImage::from_rgb(
-                                [wad_texture.header.n_width as usize, wad_texture.header.n_height as usize], 
-                                &wad_texture.to_rgb_image_vec(bbwad::MIPMAP_LEVEL::LEVEL0)),
-                            Default::default()),
-                        ui.ctx().load_texture(
-                            "my-image", 
-                            egui::ColorImage::from_rgb(
-                                [(wad_texture.header.n_width/2) as usize, (wad_texture.header.n_height/2) as usize], 
-                                &wad_texture.to_rgb_image_vec(bbwad::MIPMAP_LEVEL::LEVEL1)),
-                            Default::default()),
-                        ui.ctx().load_texture(
-                            "my-image", 
-                            egui::ColorImage::from_rgb(
-                                [(wad_texture.header.n_width/4) as usize, (wad_texture.header.n_height/4) as usize], 
-                                &wad_texture.to_rgb_image_vec(bbwad::MIPMAP_LEVEL::LEVEL2)),
-                            Default::default()),
-                        ui.ctx().load_texture(
-                            "my-image", 
-                            egui::ColorImage::from_rgb(
-                                [(wad_texture.header.n_width/8) as usize, (wad_texture.header.n_height/8) as usize], 
-                                &wad_texture.to_rgb_image_vec(bbwad::MIPMAP_LEVEL::LEVEL3)),
-                            Default::default())
-                    ]
-                );
-            },
-            None => (),
-        }
-    }
-
-    fn fill_textures_vector(&mut self, ui: &egui::Ui) {
-        match &self.wad_file {
-            Some(wad_file) => {
-                self.textures.clear();
-                for entry in wad_file.entries.iter() {
-                    let texture = ui.ctx().load_texture(
-                        "my-image", 
-                        egui::ColorImage::from_rgb(
-                            [entry.texture.header.n_width as usize, entry.texture.header.n_height as usize], 
-                            &entry.texture.to_rgb_image_vec(bbwad::MIPMAP_LEVEL::LEVEL0)),
-                        Default::default());
-                        self.textures.push(texture);
-                }
-            },
-            None => (),
-        }
-    }
-
-    fn get_entry_info_str(&self) -> Option<String> {
-        match &self.wad_file {
-            Some(wad_file) => {
-                let dir_entry = &wad_file.entries[self.wad_index].dir_entry;
-                match dir_entry.name_str() {
-                    Some(name) => {
-                        Some(
-                            format!(
-                                "name {:?}\nsize {:?}\ncompressed {:?}\n", 
-                                name, dir_entry.n_disk_size, dir_entry.b_compression))
-                    },
-                    None => None,
-                }
-            },
-            None => None,
-        }
+    fn id_incrementor(&mut self) -> usize {
+        self.id_incrementor = self.id_incrementor.checked_add(1).expect("Wow, that's a fuck ton of windows");
+        self.id_incrementor
     }
 }
 
 impl eframe::App for MyApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        let mut update_active_image = false;
-        egui::CentralPanel::default().show(ctx, |ui| {
-            ui.heading("Wad Viewer");
-
+        for hl_file_widget in self.hl_file_widgets.iter_mut() {
+            hl_file_widget.show(ctx);
+        }
+        egui::TopBottomPanel::top("top").show(ctx, |ui| {
             ui.horizontal(|ui| {
-                if ui.button("Prev").clicked() {
-                    self.wad_index -= 1;
-                    update_active_image = true;
-                }
-                if ui.button("Next").clicked() {
-                    self.wad_index += 1;
-                    update_active_image = true;
-                }
-            });
-
-            ui.horizontal(|ui| {
-                match &self.active_image {
-                    Some(image) => {
-                        ui.horizontal(|ui| {
-                            ui.set_height(256.);
-                            ui.set_width(512.);
-                            for texture in image {
-                                ui.add(egui::Image::new(texture, texture.size_vec2()));
-                            }
-                        });
-                    },
-                    None => {
-                        let texture: &egui::TextureHandle = &ui.ctx().load_texture(
-                            "my-image", 
-                            egui::ColorImage::example(),
-                            Default::default());
-                        ui.add_sized([300., 300.], egui::Image::new(texture, texture.size_vec2()));
-                    },
-                }
-                match self.get_entry_info_str() {
-                    Some(mut label) => {
-                        ui.add(
-                             egui::TextEdit::multiline(&mut label)
-                             .interactive(false)
-                             .frame(false));
-                    },
-                    None => (),
-                }
-            });
-
-            if ui.button("regen").clicked() {
-                self.wad_file.as_mut().unwrap().regenerate();
-            }
-
-        });
-        egui::TopBottomPanel::bottom("bottom")
-            .resizable(true)
-            .frame(egui::Frame::none().fill(egui::Color32::from_rgb(64, 64, 128)))
-            .show(ctx, |ui| {
-            egui::ScrollArea::horizontal()
-                .id_source("second")
-                .show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        for (itr, texture) in self.textures.iter().enumerate() {
-                            let response = ui.add(egui::ImageButton::new(texture, texture.size_vec2()));
-                            if response.clicked() {
-                                self.wad_index = itr;
-                                update_active_image = true;
-                            }
-                        }
-                    });
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
+                    if ui.button("Upload File").clicked() {
+                        self.file_dialog.open(); 
+                    }
                 });
-            if update_active_image {
-                self.update_active_image(&ui);
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
+                    if ui.button("Get Info").clicked() {
+                        let id = self.id_incrementor();
+                        self.hl_file_widgets.push(Box::new(info::DevInfoWindow::new(id)));
+                    }
+                });
+            });
+            if let Some((name, file)) = self.file_dialog.get() {
+                if hlwad::WadFile::validate_header(&file) {
+                    let id = self.id_incrementor();
+                    self.hl_file_widgets.push(Box::new(hlwad::WadFileWidget::from_bytes_with_name(&file, id, name)));
+                }
+                //if hlmdl::MdlFile::validate_header(&file) {
+                    //let id = self.id_incrementor();
+                    //self.hl_file_widgets.push(Box::new(hlmdl::MdlFileWidget::from_bytes(&file, id)));
+                //}
             }
         });
-        egui::SidePanel::right("side_panel_right").show(ctx, |ui| {
-            if ui.button("Upload File").clicked() {
-                self.file_dialog.open(); 
-            }
-
-            if let Some(file) = self.file_dialog.get() {
-                self.wad_file.replace(bbwad::WadFile::from_bytes(&file));
-                self.fill_textures_vector(&ui); 
-                self.update_active_image(&ui);
-                update_active_image = true;
-            }
+        egui::SidePanel::left("file-list").show(ctx, |ui| {
+            ui.vertical(|ui| {
+                ui.label("Open Files");
+                for file_widget in self.hl_file_widgets.iter_mut() {
+                    let mut fill = egui::Color32::LIGHT_GRAY;
+                    if file_widget.get_visibility() {
+                        fill = egui::Color32::TRANSPARENT;
+                    }
+                    let response = ui.add(egui::Button::new(file_widget.get_name()).fill(fill));
+                    if response.clicked() {
+                        let visibility = !file_widget.get_visibility();
+                        file_widget.set_visibility(visibility);
+                    }
+                }
+            });
         });
     }
 }
