@@ -370,6 +370,7 @@ pub struct MdlFileWidget {
     pub update_texture: bool,
     pub init_textures: bool,
     pub name: String,
+    pub visible: bool,
     pub id: usize,
 }
 
@@ -390,19 +391,33 @@ impl MdlFileWidget {
             update_texture,
             init_textures,
             name,
+            visible: true,
             id,
         }
     }
 }
 
 impl super::HlFileWidget for MdlFileWidget {
-    fn show(&mut self, ctx: &egui::Context, open: &mut bool) {
+    fn show(&mut self, ctx: &egui::Context) {
+        let mut vis = self.visible;
         use super::View as _;
         egui::Window::new(self.name.as_str())
-            .open(open)
+            .open(&mut vis)
             .scroll2([true, true])
             .id(egui::Id::new(self.id))
             .show(ctx, |ui| self.ui(ui));
+    }
+
+    fn get_name(&self) -> String {
+        self.name.clone()
+    }
+
+    fn set_visibility(&mut self, visible: bool) {
+        self.visible = visible;
+    }
+
+    fn get_visibility(&mut self) -> bool {
+        self.visible 
     }
 }
 

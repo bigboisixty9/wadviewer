@@ -220,7 +220,7 @@ pub struct Texture {
 
 impl Texture {
     pub fn from_directory_entry(entry: DirectoryEntry, wad_data: &Vec<u8>) -> Self {
-        let mut palette: [Color; 256] = [Color::new(0, 0, 0); 256];
+        let mut palette: [Color; 256] = [Color::new(0, 0, 0xFF); 256];
         let palette_offset = (entry.n_file_pos + entry.n_disk_size - (256 * 3) - 2) as usize;
         let mut palette_offset_itr = palette_offset;
         let header_slice = &wad_data[(entry.n_file_pos as usize)..((entry.n_file_pos as usize) + TEXTURE_HEADER_SIZE)];
@@ -381,10 +381,14 @@ impl Texture {
     fn to_vec(&mut self) -> Vec<u8> {
         let mut ret_vec = Vec::<u8>::new(); 
         ret_vec.append(&mut self.header.to_vec());
-        ret_vec.append(&mut self.data);
+        let mut data_clone = self.data.clone();
+        ret_vec.append(&mut data_clone);
+        let mut piss = 0;
         for color in self.palette {
             ret_vec.append(&mut color.to_vec());
+            piss += 1;
         }
+        web_sys::console::debug_3(&piss.into(), &self.header.n_width.into(), &self.header.n_height.into());
         ret_vec.push(0x00);
         ret_vec.push(0x00);
         ret_vec
@@ -491,18 +495,21 @@ pub struct WadFileWidget {
     pub init_textures: bool,
     pub name: String,
     pub id: usize,
+    pub visible: bool,
     file_dialog: FileDialog,
 }
 
 impl WadFileWidget {
     pub fn from_bytes(buf: &Vec<u8>, id: usize) -> Self {
+        Self::from_bytes_with_name(buf, id, String::from("myfile.wad"))
+    }
+    pub fn from_bytes_with_name(buf: &Vec<u8>, id: usize, name: String) -> Self {
         let wad_file = WadFile::from_bytes(buf);
         let wad_image = None;
         let textures = vec![];
         let texture_index = 0;
         let update_texture = true;
         let init_textures = true;
-        let name = String::from_utf8_lossy(&wad_file.entries[0].dir_entry.sz_name).to_string();
         Self {
             wad_file,
             wad_image,
@@ -512,38 +519,38 @@ impl WadFileWidget {
             init_textures,
             name,
             id,
+            visible: true,
             file_dialog: Default::default(),
         }
     }
 }
 
 impl super::HlFileWidget for WadFileWidget {
-    fn show(&mut self, ctx: &egui::Context, open: &mut bool) {
+    fn show(&mut self, ctx: &egui::Context) {
+        let mut vis = self.visible;
         use super::View as _;
         egui::Window::new(self.name.as_str())
-            .open(open)
+            .open(&mut vis)
             .scroll2([true, true])
             .id(egui::Id::new(self.id))
             .show(ctx, |ui| self.ui(ui));
+    }
+
+    fn get_name(&self) -> String {
+        self.name.clone()
+    }
+
+    fn set_visibility(&mut self, visible: bool) {
+        self.visible = visible;
+    }
+
+    fn get_visibility(&mut self) -> bool {
+        self.visible 
     }
 }
 
 impl super::View for WadFileWidget {
     fn ui(&mut self, ui: &mut egui::Ui) {
-        if self.init_textures {
-            self.textures.clear();
-            for entry in self.wad_file.entries.iter() {
-                let texture = &entry.texture;
-                let egui_image = ui.ctx().load_texture(
-                    "my-image", 
-                    egui::ColorImage::from_rgb(
-                        [texture.header.n_width as usize, texture.header.n_height as usize], 
-                        &texture.to_rgb_image_vec(MIPMAP_LEVEL::LEVEL0)),
-                    Default::default());
-                self.textures.push(egui_image);
-            }
-            self.init_textures = false;
-        }
         ui.horizontal(|ui| {
             match &self.wad_image {
                 Some(image) => {
@@ -570,15 +577,26 @@ impl super::View for WadFileWidget {
                                 ui.close_menu();
                             } 
                         });
-                        if let Some(file) = self.file_dialog.get() {
-                            let name = self.wad_file.entries[self.texture_index].texture.header.sz_name;
+                        if let Some((name, file)) = self.file_dialog.get() {
+                            let file_name = self.wad_file.entries[self.texture_index].texture.header.sz_name;
                             let image: image::RgbImage = image::load_from_memory_with_format(&file[..], image::ImageFormat::Bmp).unwrap().to_rgb8();
                             self.wad_file.entries[self.texture_index].texture = Texture::from_image(image);
-                            self.wad_file.entries[self.texture_index].texture.header.sz_name = name;
+                            self.wad_file.entries[self.texture_index].texture.header.sz_name = file_name;
                             self.wad_file.regenerate();
                             self.update_texture = true;
                             self.init_textures = true;
                         }
+                        ui.vertical(|ui| {
+                            let texture = &mut self.wad_file.entries[self.texture_index].texture;
+                            let name_bytes = texture.header.sz_name;
+                            let mut file_name = std::str::from_utf8(&name_bytes).unwrap().to_string();
+                            let response =  ui.text_edit_singleline(&mut file_name);
+                            if response.lost_focus() || response.has_focus() {
+                                let mut file_name_vec = file_name.as_bytes().to_vec();
+                                file_name_vec.resize(16, 0);
+                                texture.header.sz_name.copy_from_slice(&file_name_vec[..16]);
+                            }
+                        });
                     });
                 },
                 None => {
@@ -590,25 +608,60 @@ impl super::View for WadFileWidget {
                 },
             }
         });
-        egui::ScrollArea::horizontal()
-            .id_source("second")
-            .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    for (itr, texture) in self.textures.iter().enumerate() {
-                        let response = ui.add(egui::ImageButton::new(texture, texture.size_vec2()));
-                        if response.clicked() {
-                            self.texture_index = itr;
-                            self.update_texture = true;
-                        }
-                    }
-                });
-            });
-        if ui.button("Download").clicked() {
+
+        if ui.button("Download WAD").clicked() {
             self.wad_file.regenerate();
             self.file_dialog.save("sick-ass-shit.wad", self.wad_file.to_bytes());
         }
-        if ui.button("Piss").clicked() {
-            self.wad_file.to_bytes();
+
+        //let text_style = egui::TextStyle::Body;
+        //let row_height = ui.text_style_height(&text_style);
+        let row_height = ui.spacing().interact_size.y;
+        let scroll_rect = egui::Rect::from_min_size(egui::Pos2::new(0.0, 0.0), egui::Vec2::new(100.0, 100.0));
+
+        let total_rows = 10;
+
+        egui::ScrollArea::both()
+            .id_source("second")
+            //.show_rows(ui, row_height, total_rows, |ui, row_range| {
+            .show_viewport(ui, | ui, scroll_rect | {
+                let mut texture_itr = 0;
+                let mut cur_width = 0;
+                let max_width = 1000;
+                while texture_itr != self.textures.len() {
+                    ui.horizontal(|ui| {
+                        while cur_width < max_width {
+                            let texture = &self.textures[texture_itr];
+                            let width = self.wad_file.entries[texture_itr].texture.header.n_width;
+                            let response = ui.add(egui::ImageButton::new(texture, texture.size_vec2()));
+                            if response.clicked() {
+                                self.texture_index = texture_itr;
+                                self.update_texture = true;
+                            }
+                            texture_itr += 1;
+                            cur_width += width;
+                            if texture_itr == self.textures.len() {
+                                break;
+                            }
+                        }
+                    });
+                    cur_width = 0;
+                }
+            });
+
+        if self.init_textures {
+            self.textures.clear();
+            for entry in self.wad_file.entries.iter() {
+                let texture = &entry.texture;
+                let egui_image = ui.ctx().load_texture(
+                    "my-image", 
+                    egui::ColorImage::from_rgb(
+                        [texture.header.n_width as usize, texture.header.n_height as usize], 
+                        &texture.to_rgb_image_vec(MIPMAP_LEVEL::LEVEL0)),
+                    Default::default());
+                self.textures.push(egui_image);
+            }
+            self.init_textures = false;
         }
 
         if self.update_texture {

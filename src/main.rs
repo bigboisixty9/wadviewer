@@ -7,9 +7,7 @@ extern crate hlfiles;
 use hlfiles::hlmdl;
 use hlfiles::hlwad;
 use hlfiles::info;
-
-mod file_dialog;
-use crate::file_dialog::FileDialog;
+use hlfiles::file_dialog::FileDialog;
 
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> Result<(), eframe::Error> {
@@ -74,7 +72,7 @@ impl MyApp {
 impl eframe::App for MyApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         for hl_file_widget in self.hl_file_widgets.iter_mut() {
-            hl_file_widget.show(ctx, &mut true);
+            hl_file_widget.show(ctx);
         }
         egui::TopBottomPanel::top("top").show(ctx, |ui| {
             ui.horizontal(|ui| {
@@ -90,16 +88,32 @@ impl eframe::App for MyApp {
                     }
                 });
             });
-            if let Some(file) = self.file_dialog.get() {
+            if let Some((name, file)) = self.file_dialog.get() {
                 if hlwad::WadFile::validate_header(&file) {
                     let id = self.id_incrementor();
-                    self.hl_file_widgets.push(Box::new(hlwad::WadFileWidget::from_bytes(&file, id)));
+                    self.hl_file_widgets.push(Box::new(hlwad::WadFileWidget::from_bytes_with_name(&file, id, name)));
                 }
-                if hlmdl::MdlFile::validate_header(&file) {
-                    let id = self.id_incrementor();
-                    self.hl_file_widgets.push(Box::new(hlmdl::MdlFileWidget::from_bytes(&file, id)));
-                }
+                //if hlmdl::MdlFile::validate_header(&file) {
+                    //let id = self.id_incrementor();
+                    //self.hl_file_widgets.push(Box::new(hlmdl::MdlFileWidget::from_bytes(&file, id)));
+                //}
             }
+        });
+        egui::SidePanel::left("file-list").show(ctx, |ui| {
+            ui.vertical(|ui| {
+                ui.label("Open Files");
+                for file_widget in self.hl_file_widgets.iter_mut() {
+                    let mut fill = egui::Color32::LIGHT_GRAY;
+                    if file_widget.get_visibility() {
+                        fill = egui::Color32::TRANSPARENT;
+                    }
+                    let response = ui.add(egui::Button::new(file_widget.get_name()).fill(fill));
+                    if response.clicked() {
+                        let visibility = !file_widget.get_visibility();
+                        file_widget.set_visibility(visibility);
+                    }
+                }
+            });
         });
     }
 }

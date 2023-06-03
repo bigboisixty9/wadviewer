@@ -15,4 +15,4 @@ imagequant = "4.2.0"
 js-sys = "0.3.61"
 rgb = "0.8.36"
 wasm-bindgen = "0.2.84"
-web-sys = { version = "0.3.61", features = ["FilePropertyBag", "BlobPropertyBag", "Url", "HtmlAnchorElement", "FileReader", "Request", "RequestInit", "RequestMode", "Response", "Window"] }
+web-sys = { version = "0.3.61", features = ["FilePropertyBag", "BlobPropertyBag", "Url", "HtmlAnchorElement", "HtmlLinkElement", "FileReader", "Request", "RequestInit", "RequestMode", "Response", "Window"] }

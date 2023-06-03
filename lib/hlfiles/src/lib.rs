@@ -14,7 +14,10 @@ pub trait View {
 /// Something to view
 pub trait HlFileWidget {
     /// Show windows, etc
-    fn show(&mut self, ctx: &egui::Context, open: &mut bool);
+    fn show(&mut self, ctx: &egui::Context);
+    fn get_name(&self) -> String;
+    fn set_visibility(&mut self, visible: bool);
+    fn get_visibility(&mut self) -> bool;
 }
 
 pub trait GuiImage {
